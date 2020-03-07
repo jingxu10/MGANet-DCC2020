@@ -1,7 +1,8 @@
 import torch.nn as nn
 from torch.autograd import Variable
 import torch
-torch.cuda.set_device(0)
+from torch.quantization import QuantStub
+# torch.cuda.set_device(0)
 
 class BiConvLSTMCell(nn.Module):
 
@@ -46,10 +47,12 @@ class BiConvLSTMCell(nn.Module):
                                      padding=self.padding,
                                      bias=self.bias)
 
+        self.fp_func = torch.nn.quantized.FloatFunctional()
+
     def forward(self, input_tensor, cur_state):
         h_cur, c_cur = cur_state
         # print(input_tensor.shape,h_cur.shape)
-        combined = torch.cat([input_tensor, h_cur], dim=1)  # concatenate along channel axis
+        combined = self.fp_func.cat([input_tensor, h_cur], dim=1)  # concatenate along channel axis
         # print('...',combined.shape)
         combined_conv = self.conv(combined)
         cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_dim, dim=1)
@@ -57,8 +60,10 @@ class BiConvLSTMCell(nn.Module):
         f = torch.sigmoid(cc_f)
         o = torch.sigmoid(cc_o)
         g = torch.tanh(cc_g)
-        c_next = f * c_cur + i * g
-        h_next = o * torch.tanh(c_next)
+        # c_next = f * c_cur + i * g
+        # h_next = o * torch.tanh(c_next)
+        c_next = self.fp_func.add(self.fp_func.mul(f, c_cur), self.fp_func.mul(i, g))
+        h_next = self.fp_func.mul(o, torch.tanh(c_next))
         return h_next, c_next
 
 
@@ -94,6 +99,9 @@ class BiConvLSTM(nn.Module):
                                             kernel_size=self.kernel_size[i],
                                             bias=self.bias))
         self.cell_list = nn.ModuleList(cell_list)
+
+        self.quant1 = QuantStub()
+        self.quant2 = QuantStub()
 
     def forward(self, input_tensor):
 
@@ -145,8 +153,8 @@ class BiConvLSTM(nn.Module):
                 init_states.append((Variable(torch.zeros(batch_size, self.hidden_dim[i], self.height, self.width).cuda()).cuda(),
                                     Variable(torch.zeros(batch_size, self.hidden_dim[i], self.height, self.width).cuda()).cuda()))
             else:
-                init_states.append((Variable(torch.zeros(batch_size, self.hidden_dim[i], self.height, self.width).cuda()).cuda(),
-                                    Variable(torch.zeros(batch_size, self.hidden_dim[i], self.height, self.width).cuda()).cuda()))
+                init_states.append((self.quant1(Variable(torch.zeros(batch_size, self.hidden_dim[i], self.height, self.width))),
+                                    self.quant2(Variable(torch.zeros(batch_size, self.hidden_dim[i], self.height, self.width)))))
         return init_states
 
     @staticmethod
