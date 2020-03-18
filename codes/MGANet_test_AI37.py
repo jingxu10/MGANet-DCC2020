@@ -143,7 +143,7 @@ def image_test(one_filename,net_G,patch_size=[128,128],f_txt=None,opt=None, prof
                 with torch.autograd.profiler.profile() as prof:
                     fake_image = net_G(data_pre_value_patch,data_cur_value_patch,data_aft_value_patch,data_mask_value_patch)
                 if opts.profile == 'stdio':
-                    print(prof)
+                    print(prof.key_averages().table(sort_by="self_cpu_time_total"))
                 else:
                     if not os.path.exists('LOGS'):
                         os.makedirs('LOGS')
